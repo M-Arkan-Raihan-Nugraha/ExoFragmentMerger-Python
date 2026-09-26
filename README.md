@@ -1,49 +1,49 @@
 # Exo Fragment Merger
 
-Utility untuk menggabungkan file `.exo` bernomor menjadi MP4, dengan pilihan subtitle yang dapat di-burn-in atau tanpa subtitle.
+Windows desktop and CLI utility for joining numbered ExoPlayer `.exo` fragments into MP4 videos, with optional burned-in subtitles and batch episode processing.
 
-## Persyaratan
+## Requirements
 
-- Python 3.10 atau lebih baru
-- FFmpeg tersedia di `PATH` atau diberikan melalui `--ffmpeg`
-- Untuk burn-in subtitle: FFmpeg dibangun dengan `libass` dan encoder `libx264`
+- Python 3.10 or newer
+- FFmpeg on `PATH` for source/CLI use
+- For burned-in subtitles, FFmpeg must include `libass` and `libx264`
 
-Tidak ada package Python tambahan yang diperlukan.
+No additional Python packages are required for normal source usage.
 
-## Penggunaan
+## Usage
 
-Untuk penggunaan yang lebih mudah, jalankan GUI desktop:
+For regular users, download `ExoFragmentMerger.exe` from the GitHub Releases page and double-click it. FFmpeg is bundled inside the executable.
 
 ```powershell
 python -m app
 ```
 
-Di GUI, pilih folder sumber, pilih mode **Satu video** atau **Banyak episode**, pilih subtitle, lalu tentukan output. FFmpeg tetap harus tersedia di `PATH`.
+The GUI supports single-video and batch episode processing, subtitle selection, pre-flight validation, progress reporting, cancellation, resume/skip, and an About dialog.
 
-Fragmen dan subtitle dicari secara rekursif di folder `--input-dir`. Nomor di awal nama file `.exo` menentukan urutan penggabungan.
+Fragments and subtitles are discovered recursively under `--input-dir`. The leading number in each `.exo` filename determines merge order.
 
 ```powershell
-# Lihat semua subtitle yang tersedia
+# List available subtitles
 python -m app.exo_merger --input-dir .\data\input\episode_01 --list-subtitles
 
-# Pilih bahasa melalui kode ekstensi
+# Select a language by code
 python -m app.exo_merger --input-dir .\data\input\episode_01 --subtitle en --output .\data\output\video_english.mp4
 
-# Pilih file tertentu, termasuk bila ada lebih dari satu subtitle bahasa yang sama
+# Select a specific subtitle filename
 python -m app.exo_merger --input-dir .\data\input\episode_01 --subtitle subtitle_indo.vtt --output .\data\output\video_indonesia.mp4
 
-# Hasilkan video tanpa subtitle
+# Create a video without subtitles
 python -m app.exo_merger --input-dir .\data\input\episode_01 --subtitle none --output .\data\output\video_no_subtitle.mp4
 
-# Timpa output yang sudah ada secara eksplisit
+# Explicitly replace an existing output
 python -m app.exo_merger --input-dir .\data\input\episode_01 --subtitle in_ID --output .\data\output\video_hardsub_final.mp4 --overwrite
 ```
 
-Jika dijalankan di terminal interaktif dan ada beberapa subtitle, program menampilkan menu. Tanpa input pilihan, program memilih `.in_ID` bila tersedia; di mode non-interaktif gunakan `--subtitle` untuk memilih bahasa atau file secara eksplisit.
+In an interactive terminal with multiple subtitles, the program displays a selection menu. Automatic selection prefers `.in_ID` when available; use `--subtitle` for non-interactive runs.
 
-## Banyak episode
+## Multiple episodes
 
-Gunakan satu subfolder langsung untuk setiap episode:
+Use one direct subfolder for each episode:
 
 ```text
 series/
@@ -55,55 +55,73 @@ series/
     └── downloads/0/*.exo ...
 ```
 
-Proses semuanya sekaligus:
+Process all episodes:
 
 ```powershell
 python -m app.exo_merger --input-dir .\series --batch --subtitle in_ID --output-dir .\hasil
 ```
 
-Hasilnya menjadi `hasil/Episode_01.mp4`, `hasil/Episode_02.mp4`, dan seterusnya. Fragmen boleh berada di subfolder lebih dalam; yang penting folder episode adalah subfolder langsung dari `--input-dir`. Tanpa `--batch`, perilaku lama tetap berlaku dan seluruh fragmen di bawah satu folder dianggap satu episode.
+The output becomes `hasil/Episode_01.mp4`, `hasil/Episode_02.mp4`, and so on. Fragments may be nested deeper; episode folders must be direct children of `--input-dir`.
 
-## Struktur proyek
+## Project structure
 
 ```text
-app/                       kode aplikasi
-tests/                     unit test
-data/input/episode_01/     fragmen dan subtitle sumber
-data/output/               video hasil
-docs/                      dokumentasi tambahan
+app/                       application package
+tests/                     unit tests
+data/input/episode_01/     local source media
+data/output/               generated videos
+vendor/                    local FFmpeg binary
+build_windows.ps1          Windows build script
+exo_merger_gui.spec        PyInstaller configuration
+pyproject.toml             package metadata and entry points
 ```
 
-Entry point production tersedia melalui `python -m app`. Setelah package di-install, gunakan command `exo-merger-gui` untuk GUI dan `exo-merger` untuk CLI. Episode baru sebaiknya dibuat sebagai subfolder baru di `data/input/`.
+The production entry point is `python -m app`. After editable installation, use `exo-merger-gui` for the GUI and `exo-merger` for the CLI. Add new episodes as subfolders under `data/input/`.
 
-GUI menyediakan **Scan & validasi**, progress proses, pembatalan FFmpeg, dan opsi **Lewati hasil yang sudah ada** untuk melanjutkan batch yang pernah terhenti. Untuk membuat aplikasi Windows:
+## Build the Windows executable
+
+The build requires a local `vendor/ffmpeg.exe`. It is excluded from Git because it is large.
 
 ```powershell
 python -m pip install pyinstaller
 powershell -ExecutionPolicy Bypass -File .\build_windows.ps1
 ```
 
-Hasil portable adalah satu file `dist/ExoFragmentMerger.exe`. FFmpeg sudah dibundel di dalam executable, jadi user tidak perlu memasang FFmpeg, mengatur `PATH`, atau membawa folder pendamping.
+The final portable application is one file: `dist/ExoFragmentMerger.exe`. FFmpeg is bundled inside it.
 
-## Opsi
+## Release the executable on GitHub
 
-- `-i, --input-dir`: folder pencarian fragmen dan subtitle; default `.`.
-- `-s, --subtitle`: kode bahasa seperti `ar`, `en`, `es`, `fil`, `in_ID`, `pt`, nama file subtitle, atau `none`.
-- `--list-subtitles`: tampilkan subtitle yang ditemukan tanpa memproses video.
-- `-o, --output`: lokasi MP4; default `video_hardsub_final.mp4`.
-- `--overwrite`: izinkan mengganti output yang sudah ada. Tanpa opsi ini, output lama dilindungi.
-- `--skip-existing`: lewati output yang sudah ada sehingga batch dapat dilanjutkan.
-- `--allow-gaps`: lanjutkan meskipun ada indeks segmen yang hilang. Secara default gap dan nomor duplikat menghentikan proses.
-- `--batch`: proses setiap subfolder langsung sebagai satu episode.
-- `--output-dir`: folder hasil untuk mode `--batch`; default-nya folder berdasarkan `--output`.
-- `--preset`: preset `libx264`; default `ultrafast`.
-- `--crf`: kualitas `libx264` dari 0 sampai 51; default `23`.
-- `--ffmpeg`: path executable FFmpeg; default `ffmpeg`.
+Do not commit the large executable to the repository. Publish it as a GitHub Release asset:
 
-Video dengan subtitle akan meng-encode ulang gambar agar teks menjadi permanen. Audio disalin. Tanpa subtitle, stream audio/video disalin tanpa re-encode.
+1. Build `dist/ExoFragmentMerger.exe`.
+2. Open the repository on GitHub.
+3. Select **Releases** → **Create a new release**.
+4. Create a tag such as `v1.0.0`.
+5. Upload `dist/ExoFragmentMerger.exe` under **Attach binaries**.
+6. Add release notes and publish the release.
 
-Pemrosesan menggunakan folder sementara di sebelah file output dan baru mengganti output setelah FFmpeg berhasil. Folder sementara dibersihkan otomatis jika proses selesai atau gagal.
+Users can then download the executable from the Releases page.
 
-## Tes
+## CLI options
+
+- `-i, --input-dir`: fragment and subtitle folder; default `.`.
+- `-s, --subtitle`: language code, subtitle filename, or `none`.
+- `--list-subtitles`: list subtitles without processing video.
+- `-o, --output`: MP4 output path.
+- `--overwrite`: replace an existing output.
+- `--skip-existing`: skip existing outputs for resumable batch jobs.
+- `--allow-gaps`: continue when fragment numbers are missing.
+- `--batch`: process each direct subfolder as one episode.
+- `--output-dir`: output folder for batch mode.
+- `--preset`: `libx264` preset; default `ultrafast`.
+- `--crf`: `libx264` quality from 0 to 51; default `23`.
+- `--ffmpeg`: FFmpeg executable path; default `ffmpeg`.
+
+Videos with subtitles are re-encoded so the text becomes permanent. Audio is copied. Without subtitles, audio and video streams are copied without re-encoding.
+
+Processing uses a temporary folder beside the output and replaces the final output only after FFmpeg succeeds. Temporary files are cleaned automatically.
+
+## Tests
 
 ```powershell
 python -m unittest discover -s tests -p "test_*.py" -v
