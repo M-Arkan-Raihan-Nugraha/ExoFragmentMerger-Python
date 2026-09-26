@@ -12,7 +12,7 @@ No additional Python packages are required for normal source usage.
 
 ## Usage
 
-For regular users, download `ExoFragmentMerger.exe` from the GitHub Releases page and double-click it. FFmpeg is bundled inside the executable.
+For regular users, run the packaged `ExoFragmentMerger.exe` and double-click it. FFmpeg is bundled inside the executable.
 
 ```powershell
 python -m app
@@ -88,19 +88,6 @@ powershell -ExecutionPolicy Bypass -File .\build_windows.ps1
 ```
 
 The final portable application is one file: `dist/ExoFragmentMerger.exe`. FFmpeg is bundled inside it.
-
-## Release the executable on GitHub
-
-Do not commit the large executable to the repository. Publish it as a GitHub Release asset:
-
-1. Build `dist/ExoFragmentMerger.exe`.
-2. Open the repository on GitHub.
-3. Select **Releases** → **Create a new release**.
-4. Create a tag such as `v1.0.0`.
-5. Upload `dist/ExoFragmentMerger.exe` under **Attach binaries**.
-6. Add release notes and publish the release.
-
-Users can then download the executable from the Releases page.
 
 ## CLI options
 
