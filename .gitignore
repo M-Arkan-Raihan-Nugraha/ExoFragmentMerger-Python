@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.venv/
+build/
+dist/
+vendor/
+data/input/
+data/output/
+data/output/*.mp4
+data/input/**/joined.ts
+data/input/**/result.mp4

@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "exo-fragment-merger"
+version = "1.0.0"
+description = "Desktop and CLI utility for merging numbered ExoPlayer fragments"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+exo-merger = "app.exo_merger:main"
+exo-merger-gui = "app.gui:main"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
