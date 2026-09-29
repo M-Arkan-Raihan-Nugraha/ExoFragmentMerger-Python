@@ -108,7 +108,7 @@ Videos with subtitles are re-encoded so the text becomes permanent. Audio is cop
 
 Processing uses a temporary folder beside the output and replaces the final output only after FFmpeg succeeds. Temporary files are cleaned automatically.
 
-## Tests
+## Test
 
 ```powershell
 python -m unittest discover -s tests -p "test_*.py" -v
