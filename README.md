@@ -69,10 +69,12 @@ ExoFragmentMerger auto-detects the cache format:
 
 | Format | Used By | Example Filename |
 |--------|---------|------------------|
-| Legacy ExoPlayer | Anime apps, older players | `0.0.segment.exo` |
-| Media3 v3 | YouTube, modern apps | `0.0.1697456789123.v3.exo` |
+| Legacy ExoPlayer | Anime apps, older players | `0.exo`, `0.0.segment.exo` |
+| Media3 v3 | Modern streaming/anime apps | `0.0.1697456789123.v3.exo` |
 
-YouTube and other DASH-based apps store video and audio as separate tracks. The merger automatically detects multiple tracks, concatenates each one, and muxes them together via FFmpeg.
+> [!IMPORTANT]
+> **YouTube Offline Downloads are NOT supported:**
+> Official YouTube Android offline downloads (`.exo`) are protected by device-specific DRM and AES encryption (`AesCipherDataSink` with encrypted `cached_content_index.exi`). ExoFragmentMerger only works with **unencrypted** `.exo` fragments (such as those from anime/streaming apps). For YouTube videos, use tools like `yt-dlp` instead.
 
 To force a specific format:
 
@@ -81,7 +83,7 @@ To force a specific format:
 python -m app.exo_merger --input-dir .\data\input\episode_01 --format legacy --output .\video.mp4
 
 # Force Media3 format
-python -m app.exo_merger --input-dir .\data\input\youtube_video --format media3 --output .\video.mp4
+python -m app.exo_merger --input-dir .\data\input\episode_media3 --format media3 --output .\video.mp4
 ```
 
 ## Project structure
