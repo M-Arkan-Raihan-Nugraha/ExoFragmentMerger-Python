@@ -4,6 +4,7 @@ __pycache__/
 build/
 dist/
 vendor/
+.superpowers/
 data/input/
 data/output/
 data/output/*.mp4

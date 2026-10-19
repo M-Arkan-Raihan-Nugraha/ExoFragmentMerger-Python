@@ -10,6 +10,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from . import __author__, __version__
+from .cache_format import CacheFormat, detect_cache_format, group_media3_segments, is_single_stream_media3
 from .exo_merger import (
     _find_executable,
     discover_episode_dirs,
@@ -163,11 +164,42 @@ class MergerApp(tk.Tk):
     def _scan(self) -> None:
         try:
             root = Path(self.input_var.get()).expanduser().resolve()
+            cache_format = detect_cache_format(root)
+
             if self.mode_var.get() == "batch":
                 episodes = discover_episode_dirs(root)
                 rows = [inspect_episode(path, self.allow_gaps_var.get()) for path in episodes]
             else:
+                if cache_format == CacheFormat.MEDIA3_V3:
+                    groups = group_media3_segments(root)
+                    if not groups:
+                        raise ValueError("No Media3 v3 .exo fragments were found.")
+                    single_stream = is_single_stream_media3(groups)
+                    total_segments = sum(len(g.segments) for g in groups)
+
+                    if single_stream:
+                        total_bytes = sum(g.total_bytes for g in groups)
+                        self._append_log(f"Format: Media3 v3 (single-stream, {total_segments} fragments)")
+                        self._append_log(f"  Total size: {total_bytes / 1024 / 1024:.1f} MB")
+                        self.status_var.set(
+                            f"Valid: Media3 single-stream, {total_segments} fragment(s)."
+                        )
+                    else:
+                        self._append_log(f"Format: Media3 v3 ({len(groups)} track(s))")
+                        for group in groups:
+                            self._append_log(
+                                f"  Track {group.content_id}: {len(group.segments)} fragments, "
+                                f"{group.total_bytes / 1024 / 1024:.1f} MB"
+                            )
+                        self.status_var.set(
+                            f"Valid: Media3 multi-track, {len(groups)} track(s), {total_segments} fragment(s)."
+                        )
+                    self.progress["value"] = 0
+                    return
                 rows = [inspect_episode(root, self.allow_gaps_var.get())]
+
+            format_label = "Media3 v3" if cache_format == CacheFormat.MEDIA3_V3 else "Legacy"
+            self._append_log(f"Format: {format_label}")
             self._append_log("Validation successful:")
             for row in rows:
                 self._append_log(f"- {row['name']}: {row['segments']} fragments ({row['first']} to {row['last']})")

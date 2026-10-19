@@ -14,6 +14,8 @@ import threading
 from pathlib import Path
 from typing import Callable, Sequence
 
+from .cache_format import CacheFormat, detect_cache_format, group_media3_segments, is_single_stream_media3
+
 
 SEGMENT_PATTERN = re.compile(r"^(\d+)\.")
 SUBTITLE_SUFFIXES = {".ar", ".en", ".es", ".fil", ".in_id", ".pt", ".srt", ".vtt", ".ass", ".ssa"}
@@ -98,11 +100,33 @@ def validate_segments(segments: Sequence[Path], allow_gaps: bool = False) -> Non
 
 def inspect_episode(root: Path, allow_gaps: bool = False) -> dict[str, object]:
     """Validate an episode without invoking FFmpeg."""
+    cache_format = detect_cache_format(root)
+
+    if cache_format == CacheFormat.MEDIA3_V3:
+        groups = group_media3_segments(root)
+        if not groups:
+            raise ValueError("No Media3 v3 .exo fragments were found.")
+        single_stream = is_single_stream_media3(groups)
+        total_segments = sum(len(g.segments) for g in groups)
+        return {
+            "name": root.name,
+            "path": root,
+            "format": "media3_v3",
+            "single_stream": single_stream,
+            "tracks": 1 if single_stream else len(groups),
+            "segments": total_segments,
+            "first": groups[0].segments[0].name,
+            "last": groups[-1].segments[-1].name,
+            "subtitles": discover_subtitles(root),
+        }
+
+    # Legacy format
     segments = discover_segments(root)
     validate_segments(segments, allow_gaps=allow_gaps)
     return {
         "name": root.name,
         "path": root,
+        "format": "legacy",
         "segments": len(segments),
         "first": segments[0].name,
         "last": segments[-1].name,
@@ -229,6 +253,36 @@ def build_ffmpeg_command(
     return command
 
 
+def build_ffmpeg_multitrack_command(
+    ffmpeg: str,
+    inputs: Sequence[Path],
+    output: Path,
+    subtitle: Path | None,
+    preset: str,
+    crf: int,
+) -> list[str]:
+    """Build an FFmpeg command that muxes multiple input streams (e.g. video + audio)."""
+    command = [ffmpeg, "-hide_banner", "-nostdin", "-y", "-err_detect", "ignore_err"]
+    for input_path in inputs:
+        command.extend(["-i", str(input_path)])
+    # Map all video streams from first input, all audio from all inputs
+    command.extend(["-map", "0:v:0"])
+    for index in range(len(inputs)):
+        command.extend(["-map", f"{index}:a?"])
+    if subtitle is None:
+        command.extend(["-c", "copy", "-bsf:a", "aac_adtstoasc"])
+    else:
+        subtitle_filter = f"subtitles='{escape_filter_path(subtitle)}'"
+        command.extend([
+            "-vf", subtitle_filter,
+            "-c:v", "libx264", "-preset", preset, "-crf", str(crf),
+            "-c:a", "copy", "-bsf:a", "aac_adtstoasc",
+        ])
+    command.extend(["-progress", "pipe:1", "-nostats"])
+    command.append(str(output))
+    return command
+
+
 def prompt_for_subtitle(candidates: Sequence[Path]) -> Path | None:
     print("Choose a subtitle:")
     print("  0. No subtitles")
@@ -279,6 +333,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="libx264 encoder preset (default: ultrafast)",
     )
     parser.add_argument("--crf", type=int, default=23, help="libx264 quality, range 0-51 (default: 23)")
+    parser.add_argument(
+        "--format",
+        choices=("auto", "legacy", "media3"),
+        default="auto",
+        help="Cache format: auto-detect (default), force legacy, or force media3",
+    )
     return parser
 
 
@@ -319,6 +379,127 @@ def _safe_output_name(name: str) -> str:
     return cleaned or "episode"
 
 
+def _merge_media3_episode(
+    input_dir: Path,
+    output: Path,
+    subtitle_selection: str | Path | None,
+    ffmpeg: str,
+    preset: str,
+    crf: int,
+    fallback_subtitle_dir: Path | None = None,
+    overwrite: bool = False,
+    skip_existing: bool = False,
+    progress_callback: ProgressCallback | None = None,
+    cancel_event: threading.Event | None = None,
+) -> bool:
+    """Merge one episode using Media3 v3 format (multi-track aware)."""
+    groups = group_media3_segments(input_dir)
+    if not groups:
+        raise ValueError("No Media3 v3 .exo fragments were found.")
+
+    single_stream = is_single_stream_media3(groups)
+
+    candidates = discover_subtitles(input_dir)
+    if not candidates and fallback_subtitle_dir is not None:
+        candidates = discover_subtitles(fallback_subtitle_dir)
+    subtitle = (
+        subtitle_selection
+        if isinstance(subtitle_selection, Path)
+        else resolve_subtitle(candidates, subtitle_selection)
+    )
+
+    if output.exists() and not output.is_file():
+        raise ValueError(f"Output is not a file: {output}")
+    if output.exists() and skip_existing:
+        print(f"[{input_dir.name}] Skipped, output already exists: {output}")
+        if progress_callback:
+            progress_callback("skipped", 1.0)
+        return False
+    if output.exists() and not overwrite:
+        raise ValueError(f"Output already exists: {output}. Use --overwrite to replace it.")
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    total_segments = sum(len(g.segments) for g in groups)
+
+    if single_stream:
+        print(f"[{input_dir.name}] Media3 single-stream: {total_segments} fragment(s)")
+    else:
+        print(f"[{input_dir.name}] Media3 multi-track: {len(groups)} track(s), {total_segments} fragment(s)")
+    print(f"[{input_dir.name}] Subtitle: {subtitle_label(subtitle) if subtitle else 'none'}")
+
+    with tempfile.TemporaryDirectory(prefix="exo-merge-", dir=output.parent) as temporary_directory:
+        temporary_root = Path(temporary_directory)
+        segments_done = 0
+
+        if single_stream:
+            # Anime-style: each content_id has one fragment at offset 0.
+            # Concat all fragments sequentially into a single .ts file.
+            raw_input = temporary_root / "joined.ts"
+            all_segments = [g.segments[0] for g in groups]
+            with raw_input.open("wb") as out_file:
+                for path in all_segments:
+                    if cancel_event and cancel_event.is_set():
+                        raise MergeCancelled("Process cancelled by user.")
+                    with path.open("rb") as in_file:
+                        shutil.copyfileobj(in_file, out_file, length=1024 * 1024)
+                    segments_done += 1
+                    if progress_callback:
+                        progress_callback("joining fragments", 0.3 * segments_done / total_segments)
+            joined_paths = [raw_input]
+        else:
+            # YouTube-style: group by content_id, concat each track separately.
+            joined_paths = []
+            for group in groups:
+                if cancel_event and cancel_event.is_set():
+                    raise MergeCancelled("Process cancelled by user.")
+                track_file = temporary_root / f"track_{group.content_id}.ts"
+                with track_file.open("wb") as out_file:
+                    for path in group.segments:
+                        if cancel_event and cancel_event.is_set():
+                            raise MergeCancelled("Process cancelled by user.")
+                        with path.open("rb") as in_file:
+                            shutil.copyfileobj(in_file, out_file, length=1024 * 1024)
+                        segments_done += 1
+                        if progress_callback:
+                            progress_callback("joining fragments", 0.3 * segments_done / total_segments)
+                joined_paths.append(track_file)
+
+        temporary_output = temporary_root / "result.mp4"
+        if len(joined_paths) == 1:
+            command = build_ffmpeg_command(ffmpeg, joined_paths[0], temporary_output, subtitle, preset, crf)
+        else:
+            command = build_ffmpeg_multitrack_command(ffmpeg, joined_paths, temporary_output, subtitle, preset, crf)
+
+        if progress_callback:
+            progress_callback("running FFmpeg", 0.3)
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        assert process.stdout is not None
+        for line in process.stdout:
+            if cancel_event and cancel_event.is_set():
+                process.terminate()
+                process.wait(timeout=10)
+                raise MergeCancelled("Process cancelled by user.")
+            if progress_callback and line.startswith("progress="):
+                progress_callback("running FFmpeg", 0.3)
+        return_code = process.wait()
+        if return_code:
+            raise subprocess.CalledProcessError(return_code, command)
+        if cancel_event and cancel_event.is_set():
+            raise MergeCancelled("Process cancelled by user.")
+        os.replace(temporary_output, output)
+    if progress_callback:
+        progress_callback("completed", 1.0)
+    print(f"[{input_dir.name}] Video saved: {output}")
+    return True
+
+
 def merge_episode(
     input_dir: Path,
     output: Path,
@@ -334,6 +515,15 @@ def merge_episode(
     cancel_event: threading.Event | None = None,
 ) -> bool:
     """Merge one episode and atomically publish its output."""
+    cache_format = detect_cache_format(input_dir)
+    if cache_format == CacheFormat.MEDIA3_V3:
+        return _merge_media3_episode(
+            input_dir, output, subtitle_selection, ffmpeg, preset, crf,
+            fallback_subtitle_dir, overwrite, skip_existing,
+            progress_callback, cancel_event,
+        )
+
+    # --- Legacy format (original flow, unchanged) ---
     segments = discover_segments(input_dir)
     validate_segments(segments, allow_gaps=allow_gaps)
     candidates = discover_subtitles(input_dir)

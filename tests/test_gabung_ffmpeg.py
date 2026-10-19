@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from app.exo_merger import (
     build_ffmpeg_command,
+    build_ffmpeg_multitrack_command,
     discover_segments,
     discover_episode_dirs,
     discover_subtitles,
@@ -14,6 +15,7 @@ from app.exo_merger import (
     resolve_subtitle,
     validate_segments,
 )
+from app.cache_format import CacheFormat, detect_cache_format, group_media3_segments
 
 
 class DiscoveryTests(unittest.TestCase):
@@ -140,6 +142,105 @@ class DiscoveryTests(unittest.TestCase):
 
             self.assertEqual(result, 0)
             self.assertEqual(output.read_bytes(), b"keep")
+
+class Media3DiscoveryTests(unittest.TestCase):
+    def test_media3_segments_discovered_and_grouped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sub = root / "0"
+            sub.mkdir()
+            (sub / "0.0.100000.v3.exo").write_bytes(b"video1")
+            (sub / "0.1048576.100001.v3.exo").write_bytes(b"video2")
+            (sub / "1.0.100002.v3.exo").write_bytes(b"audio1")
+
+            groups = group_media3_segments(root)
+
+            self.assertEqual(len(groups), 2)
+            self.assertEqual(groups[0].content_id, 0)
+            self.assertEqual(groups[1].content_id, 1)
+
+    def test_legacy_segments_still_work_after_format_detection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "0.0.segment.exo").write_bytes(b"seg0")
+            (root / "1.0.segment.exo").write_bytes(b"seg1")
+
+            fmt = detect_cache_format(root)
+            self.assertEqual(fmt, CacheFormat.LEGACY)
+
+            segments = discover_segments(root)
+            self.assertEqual(len(segments), 2)
+
+
+class MultiTrackCommandTests(unittest.TestCase):
+    def test_multitrack_command_includes_all_inputs(self):
+        inputs = [Path("video.ts"), Path("audio.ts")]
+        command = build_ffmpeg_multitrack_command(
+            "ffmpeg", inputs, Path("output.mp4"), None, "ultrafast", 23
+        )
+
+        input_flags = [i for i, arg in enumerate(command) if arg == "-i"]
+        self.assertEqual(len(input_flags), 2)
+        self.assertIn("video.ts", command)
+        self.assertIn("audio.ts", command)
+        self.assertIn("-c", command)
+        self.assertIn("copy", command)
+
+    def test_multitrack_command_with_subtitle(self):
+        inputs = [Path("video.ts"), Path("audio.ts")]
+        subtitle = Path("subs.vtt")
+        command = build_ffmpeg_multitrack_command(
+            "ffmpeg", inputs, Path("output.mp4"), subtitle, "ultrafast", 23
+        )
+
+        self.assertIn("-vf", command)
+        self.assertIn("-c:v", command)
+        self.assertIn("libx264", command)
+        self.assertIn("-c:a", command)
+        self.assertIn("copy", command)
+
+class InspectMedia3Tests(unittest.TestCase):
+    def test_inspect_episode_with_media3_multitrack(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "0.0.100000.v3.exo").write_bytes(b"video1")
+            (root / "0.1048576.100001.v3.exo").write_bytes(b"video2")
+            (root / "1.0.100002.v3.exo").write_bytes(b"audio1")
+
+            from app.exo_merger import inspect_episode
+            info = inspect_episode(root)
+
+            self.assertEqual(info["format"], "media3_v3")
+            self.assertFalse(info["single_stream"])
+            self.assertEqual(info["tracks"], 2)
+            self.assertEqual(info["segments"], 3)
+
+    def test_inspect_episode_with_media3_single_stream(self):
+        """Anime-style: each content_id has 1 fragment at offset 0."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for i in range(5):
+                (root / f"{i}.0.{1000+i}.v3.exo").write_bytes(b"data")
+
+            from app.exo_merger import inspect_episode
+            info = inspect_episode(root)
+
+            self.assertEqual(info["format"], "media3_v3")
+            self.assertTrue(info["single_stream"])
+            self.assertEqual(info["tracks"], 1)
+            self.assertEqual(info["segments"], 5)
+
+    def test_inspect_episode_legacy_includes_format_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "0.0.segment.exo").write_bytes(b"seg0")
+            (root / "1.0.segment.exo").write_bytes(b"seg1")
+
+            from app.exo_merger import inspect_episode
+            info = inspect_episode(root)
+
+            self.assertEqual(info["format"], "legacy")
+            self.assertEqual(info["segments"], 2)
 
 
 if __name__ == "__main__":
