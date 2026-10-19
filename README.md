@@ -63,6 +63,27 @@ python -m app.exo_merger --input-dir .\series --batch --subtitle in_ID --output-
 
 The output becomes `hasil/Episode_01.mp4`, `hasil/Episode_02.mp4`, and so on. Fragments may be nested deeper; episode folders must be direct children of `--input-dir`.
 
+## Supported formats
+
+ExoFragmentMerger auto-detects the cache format:
+
+| Format | Used By | Example Filename |
+|--------|---------|------------------|
+| Legacy ExoPlayer | Anime apps, older players | `0.0.segment.exo` |
+| Media3 v3 | YouTube, modern apps | `0.0.1697456789123.v3.exo` |
+
+YouTube and other DASH-based apps store video and audio as separate tracks. The merger automatically detects multiple tracks, concatenates each one, and muxes them together via FFmpeg.
+
+To force a specific format:
+
+```powershell
+# Force legacy format
+python -m app.exo_merger --input-dir .\data\input\episode_01 --format legacy --output .\video.mp4
+
+# Force Media3 format
+python -m app.exo_merger --input-dir .\data\input\youtube_video --format media3 --output .\video.mp4
+```
+
 ## Project structure
 
 ```text
@@ -103,6 +124,7 @@ The final portable application is one file: `dist/ExoFragmentMerger.exe`. FFmpeg
 - `--preset`: `libx264` preset; default `ultrafast`.
 - `--crf`: `libx264` quality from 0 to 51; default `23`.
 - `--ffmpeg`: FFmpeg executable path; default `ffmpeg`.
+- `--format`: cache format — `auto` (default), `legacy`, or `media3`.
 
 Videos with subtitles are re-encoded so the text becomes permanent. Audio is copied. Without subtitles, audio and video streams are copied without re-encoding.
 
