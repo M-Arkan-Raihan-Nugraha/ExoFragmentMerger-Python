@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from app.exo_merger import (
     build_ffmpeg_command,
+    build_ffmpeg_multitrack_command,
     discover_segments,
     discover_episode_dirs,
     discover_subtitles,
@@ -14,6 +15,7 @@ from app.exo_merger import (
     resolve_subtitle,
     validate_segments,
 )
+from app.cache_format import CacheFormat, detect_cache_format, group_media3_segments
 
 
 class DiscoveryTests(unittest.TestCase):
@@ -140,6 +142,62 @@ class DiscoveryTests(unittest.TestCase):
 
             self.assertEqual(result, 0)
             self.assertEqual(output.read_bytes(), b"keep")
+
+class Media3DiscoveryTests(unittest.TestCase):
+    def test_media3_segments_discovered_and_grouped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sub = root / "0"
+            sub.mkdir()
+            (sub / "0.0.100000.v3.exo").write_bytes(b"video1")
+            (sub / "0.1048576.100001.v3.exo").write_bytes(b"video2")
+            (sub / "1.0.100002.v3.exo").write_bytes(b"audio1")
+
+            groups = group_media3_segments(root)
+
+            self.assertEqual(len(groups), 2)
+            self.assertEqual(groups[0].content_id, 0)
+            self.assertEqual(groups[1].content_id, 1)
+
+    def test_legacy_segments_still_work_after_format_detection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "0.0.segment.exo").write_bytes(b"seg0")
+            (root / "1.0.segment.exo").write_bytes(b"seg1")
+
+            fmt = detect_cache_format(root)
+            self.assertEqual(fmt, CacheFormat.LEGACY)
+
+            segments = discover_segments(root)
+            self.assertEqual(len(segments), 2)
+
+
+class MultiTrackCommandTests(unittest.TestCase):
+    def test_multitrack_command_includes_all_inputs(self):
+        inputs = [Path("video.ts"), Path("audio.ts")]
+        command = build_ffmpeg_multitrack_command(
+            "ffmpeg", inputs, Path("output.mp4"), None, "ultrafast", 23
+        )
+
+        input_flags = [i for i, arg in enumerate(command) if arg == "-i"]
+        self.assertEqual(len(input_flags), 2)
+        self.assertIn("video.ts", command)
+        self.assertIn("audio.ts", command)
+        self.assertIn("-c", command)
+        self.assertIn("copy", command)
+
+    def test_multitrack_command_with_subtitle(self):
+        inputs = [Path("video.ts"), Path("audio.ts")]
+        subtitle = Path("subs.vtt")
+        command = build_ffmpeg_multitrack_command(
+            "ffmpeg", inputs, Path("output.mp4"), subtitle, "ultrafast", 23
+        )
+
+        self.assertIn("-vf", command)
+        self.assertIn("-c:v", command)
+        self.assertIn("libx264", command)
+        self.assertIn("-c:a", command)
+        self.assertIn("copy", command)
 
 
 if __name__ == "__main__":
