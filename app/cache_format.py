@@ -85,3 +85,25 @@ def group_media3_segments(root: Path) -> list[ContentGroup]:
         )
         groups.append(group)
     return groups
+
+
+def is_single_stream_media3(groups: list[ContentGroup]) -> bool:
+    """Detect whether Media3 v3 groups represent a single sequential stream.
+
+    Some apps (anime players) use Media3 cache where each segment gets its
+    own content_id with a single fragment at offset 0.  This looks like
+    multi-track to a naive parser, but is actually one sequential stream
+    whose segments should be concatenated in content_id order.
+
+    Heuristic: if every group has exactly one fragment and that fragment
+    starts at offset 0, treat it as a single sequential stream.
+    """
+    if not groups:
+        return False
+    for group in groups:
+        if len(group.segments) != 1:
+            return False
+        parsed = parse_media3_filename(group.segments[0].name)
+        if parsed is None or parsed[1] != 0:
+            return False
+    return True

@@ -8,6 +8,7 @@ from app.cache_format import (
     detect_cache_format,
     parse_media3_filename,
     group_media3_segments,
+    is_single_stream_media3,
 )
 
 
@@ -99,6 +100,36 @@ class ContentGroupingTests(unittest.TestCase):
             groups = group_media3_segments(root)
 
             self.assertEqual(len(groups[0].segments), 1)
+
+
+class SingleStreamTests(unittest.TestCase):
+    """Test the anime vs YouTube single-stream heuristic."""
+
+    def test_anime_style_all_offset_zero_is_single_stream(self):
+        """Each content_id has 1 fragment at offset 0 → single stream."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for i in range(5):
+                (root / f"{i}.0.{1000+i}.v3.exo").write_bytes(b"data")
+
+            groups = group_media3_segments(root)
+            self.assertTrue(is_single_stream_media3(groups))
+
+    def test_youtube_style_multi_chunk_is_not_single_stream(self):
+        """Content_id with multiple fragments → multi-track."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            # Video track with 2 chunks
+            (root / "0.0.1000.v3.exo").write_bytes(b"chunk1")
+            (root / "0.1048576.1001.v3.exo").write_bytes(b"chunk2")
+            # Audio track
+            (root / "1.0.1002.v3.exo").write_bytes(b"audio")
+
+            groups = group_media3_segments(root)
+            self.assertFalse(is_single_stream_media3(groups))
+
+    def test_empty_groups_returns_false(self):
+        self.assertFalse(is_single_stream_media3([]))
 
 
 if __name__ == "__main__":

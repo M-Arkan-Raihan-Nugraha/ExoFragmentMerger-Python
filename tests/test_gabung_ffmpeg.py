@@ -200,7 +200,7 @@ class MultiTrackCommandTests(unittest.TestCase):
         self.assertIn("copy", command)
 
 class InspectMedia3Tests(unittest.TestCase):
-    def test_inspect_episode_with_media3_fragments(self):
+    def test_inspect_episode_with_media3_multitrack(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "0.0.100000.v3.exo").write_bytes(b"video1")
@@ -211,8 +211,24 @@ class InspectMedia3Tests(unittest.TestCase):
             info = inspect_episode(root)
 
             self.assertEqual(info["format"], "media3_v3")
+            self.assertFalse(info["single_stream"])
             self.assertEqual(info["tracks"], 2)
             self.assertEqual(info["segments"], 3)
+
+    def test_inspect_episode_with_media3_single_stream(self):
+        """Anime-style: each content_id has 1 fragment at offset 0."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for i in range(5):
+                (root / f"{i}.0.{1000+i}.v3.exo").write_bytes(b"data")
+
+            from app.exo_merger import inspect_episode
+            info = inspect_episode(root)
+
+            self.assertEqual(info["format"], "media3_v3")
+            self.assertTrue(info["single_stream"])
+            self.assertEqual(info["tracks"], 1)
+            self.assertEqual(info["segments"], 5)
 
     def test_inspect_episode_legacy_includes_format_key(self):
         with tempfile.TemporaryDirectory() as tmp:

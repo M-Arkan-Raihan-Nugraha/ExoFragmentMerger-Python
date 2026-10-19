@@ -14,7 +14,7 @@ import threading
 from pathlib import Path
 from typing import Callable, Sequence
 
-from .cache_format import CacheFormat, detect_cache_format, group_media3_segments
+from .cache_format import CacheFormat, detect_cache_format, group_media3_segments, is_single_stream_media3
 
 
 SEGMENT_PATTERN = re.compile(r"^(\d+)\.")
@@ -106,12 +106,14 @@ def inspect_episode(root: Path, allow_gaps: bool = False) -> dict[str, object]:
         groups = group_media3_segments(root)
         if not groups:
             raise ValueError("No Media3 v3 .exo fragments were found.")
+        single_stream = is_single_stream_media3(groups)
         total_segments = sum(len(g.segments) for g in groups)
         return {
             "name": root.name,
             "path": root,
             "format": "media3_v3",
-            "tracks": len(groups),
+            "single_stream": single_stream,
+            "tracks": 1 if single_stream else len(groups),
             "segments": total_segments,
             "first": groups[0].segments[0].name,
             "last": groups[-1].segments[-1].name,
@@ -395,6 +397,8 @@ def _merge_media3_episode(
     if not groups:
         raise ValueError("No Media3 v3 .exo fragments were found.")
 
+    single_stream = is_single_stream_media3(groups)
+
     candidates = discover_subtitles(input_dir)
     if not candidates and fallback_subtitle_dir is not None:
         candidates = discover_subtitles(fallback_subtitle_dir)
@@ -416,19 +420,24 @@ def _merge_media3_episode(
 
     output.parent.mkdir(parents=True, exist_ok=True)
     total_segments = sum(len(g.segments) for g in groups)
-    print(f"[{input_dir.name}] Media3 format: {len(groups)} track(s), {total_segments} fragment(s)")
+
+    if single_stream:
+        print(f"[{input_dir.name}] Media3 single-stream: {total_segments} fragment(s)")
+    else:
+        print(f"[{input_dir.name}] Media3 multi-track: {len(groups)} track(s), {total_segments} fragment(s)")
     print(f"[{input_dir.name}] Subtitle: {subtitle_label(subtitle) if subtitle else 'none'}")
 
     with tempfile.TemporaryDirectory(prefix="exo-merge-", dir=output.parent) as temporary_directory:
         temporary_root = Path(temporary_directory)
-        joined_paths: list[Path] = []
         segments_done = 0
-        for group in groups:
-            if cancel_event and cancel_event.is_set():
-                raise MergeCancelled("Process cancelled by user.")
-            track_file = temporary_root / f"track_{group.content_id}.ts"
-            with track_file.open("wb") as out_file:
-                for path in group.segments:
+
+        if single_stream:
+            # Anime-style: each content_id has one fragment at offset 0.
+            # Concat all fragments sequentially into a single .ts file.
+            raw_input = temporary_root / "joined.ts"
+            all_segments = [g.segments[0] for g in groups]
+            with raw_input.open("wb") as out_file:
+                for path in all_segments:
                     if cancel_event and cancel_event.is_set():
                         raise MergeCancelled("Process cancelled by user.")
                     with path.open("rb") as in_file:
@@ -436,7 +445,24 @@ def _merge_media3_episode(
                     segments_done += 1
                     if progress_callback:
                         progress_callback("joining fragments", 0.3 * segments_done / total_segments)
-            joined_paths.append(track_file)
+            joined_paths = [raw_input]
+        else:
+            # YouTube-style: group by content_id, concat each track separately.
+            joined_paths = []
+            for group in groups:
+                if cancel_event and cancel_event.is_set():
+                    raise MergeCancelled("Process cancelled by user.")
+                track_file = temporary_root / f"track_{group.content_id}.ts"
+                with track_file.open("wb") as out_file:
+                    for path in group.segments:
+                        if cancel_event and cancel_event.is_set():
+                            raise MergeCancelled("Process cancelled by user.")
+                        with path.open("rb") as in_file:
+                            shutil.copyfileobj(in_file, out_file, length=1024 * 1024)
+                        segments_done += 1
+                        if progress_callback:
+                            progress_callback("joining fragments", 0.3 * segments_done / total_segments)
+                joined_paths.append(track_file)
 
         temporary_output = temporary_root / "result.mp4"
         if len(joined_paths) == 1:
