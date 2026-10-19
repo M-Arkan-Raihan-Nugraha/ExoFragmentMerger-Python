@@ -88,9 +88,14 @@ python -m app.exo_merger --input-dir .\data\input\youtube_video --format media3 
 
 ```text
 app/                       application package
+  __init__.py              package metadata
+  __main__.py              GUI entry point
+  cache_format.py          Media3 v3 format detection and parsing
+  exo_merger.py            core merger logic (legacy + Media3)
+  gui.py                   Tkinter desktop interface
 tests/                     unit tests
-data/input/episode_01/     local source media
-data/output/               generated videos
+data/input/                local source media (gitignored)
+data/output/               generated videos (gitignored)
 vendor/                    local FFmpeg binary
 build_windows.ps1          Windows build script
 exo_merger_gui.spec        PyInstaller configuration
