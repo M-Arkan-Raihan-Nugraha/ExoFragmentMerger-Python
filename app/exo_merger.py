@@ -100,11 +100,31 @@ def validate_segments(segments: Sequence[Path], allow_gaps: bool = False) -> Non
 
 def inspect_episode(root: Path, allow_gaps: bool = False) -> dict[str, object]:
     """Validate an episode without invoking FFmpeg."""
+    cache_format = detect_cache_format(root)
+
+    if cache_format == CacheFormat.MEDIA3_V3:
+        groups = group_media3_segments(root)
+        if not groups:
+            raise ValueError("No Media3 v3 .exo fragments were found.")
+        total_segments = sum(len(g.segments) for g in groups)
+        return {
+            "name": root.name,
+            "path": root,
+            "format": "media3_v3",
+            "tracks": len(groups),
+            "segments": total_segments,
+            "first": groups[0].segments[0].name,
+            "last": groups[-1].segments[-1].name,
+            "subtitles": discover_subtitles(root),
+        }
+
+    # Legacy format
     segments = discover_segments(root)
     validate_segments(segments, allow_gaps=allow_gaps)
     return {
         "name": root.name,
         "path": root,
+        "format": "legacy",
         "segments": len(segments),
         "first": segments[0].name,
         "last": segments[-1].name,
@@ -311,6 +331,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="libx264 encoder preset (default: ultrafast)",
     )
     parser.add_argument("--crf", type=int, default=23, help="libx264 quality, range 0-51 (default: 23)")
+    parser.add_argument(
+        "--format",
+        choices=("auto", "legacy", "media3"),
+        default="auto",
+        help="Cache format: auto-detect (default), force legacy, or force media3",
+    )
     return parser
 
 

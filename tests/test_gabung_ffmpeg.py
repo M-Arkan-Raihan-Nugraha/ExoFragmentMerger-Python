@@ -199,6 +199,33 @@ class MultiTrackCommandTests(unittest.TestCase):
         self.assertIn("-c:a", command)
         self.assertIn("copy", command)
 
+class InspectMedia3Tests(unittest.TestCase):
+    def test_inspect_episode_with_media3_fragments(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "0.0.100000.v3.exo").write_bytes(b"video1")
+            (root / "0.1048576.100001.v3.exo").write_bytes(b"video2")
+            (root / "1.0.100002.v3.exo").write_bytes(b"audio1")
+
+            from app.exo_merger import inspect_episode
+            info = inspect_episode(root)
+
+            self.assertEqual(info["format"], "media3_v3")
+            self.assertEqual(info["tracks"], 2)
+            self.assertEqual(info["segments"], 3)
+
+    def test_inspect_episode_legacy_includes_format_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "0.0.segment.exo").write_bytes(b"seg0")
+            (root / "1.0.segment.exo").write_bytes(b"seg1")
+
+            from app.exo_merger import inspect_episode
+            info = inspect_episode(root)
+
+            self.assertEqual(info["format"], "legacy")
+            self.assertEqual(info["segments"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()
